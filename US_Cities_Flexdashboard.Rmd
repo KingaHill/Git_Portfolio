@@ -1,0 +1,202 @@
+---
+title: "Exploring US Cities by Population"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+---
+<style>                     
+.navbar {
+  background-color:#070b43;
+}
+.navbar-brand {
+color:white!important;
+font-size: 30px;
+}
+</style>
+
+```{r libraries, include = FALSE}
+library(here)
+library(sf)
+library(mapview)
+library(ggplot2)
+library(dplyr)
+library(shiny)
+library(tidycensus)
+library(tigris)
+library(leaflet)
+library(highcharter)
+```
+
+```{r setup, include=FALSE}
+# load census data
+metro_areas <- tidycensus::get_acs(
+  geography = "urban area",
+  variables = "B01003_001",
+  year = 2020,
+  show_call = TRUE
+)
+
+# Get shapes of urban areas from Tigirs and convert to points (centroids)
+metro_areas_shapes <- tigris::urban_areas() |>
+  sf::st_centroid() |>
+  sf::st_transform(crs = "EPSG:4326") 
+
+states <- tigris::states(cb = TRUE) |>
+  dplyr::filter(!STUSPS %in% c("AK", "HI", "PR", "VI", "MP", "GU", "AS")) |>
+  dplyr::arrange(NAME)
+
+```
+
+
+```{r process cities, include=FALSE}
+urban_areas <- metro_areas_shapes |>
+  sf::st_transform(crs = "EPSG:4326") %>%
+  dplyr::filter(!grepl("AK|HI|PR|VI|MP|GU|AS", NAME10)) |>
+  dplyr::left_join(metro_areas, by = join_by("GEOID10" == "GEOID")) |>
+  dplyr::filter(UATYP10 == "U") |>
+  dplyr::select(name = NAME10, population = estimate) |>
+  tidyr::separate(name, into = c("City", "State"), sep = ",") |>
+  dplyr::mutate(State = stringr::str_sub(State, 2, 3),
+                State_full = state.name[match(State, state.abb)],
+                State_full = ifelse(is.na(State_full), "District of Columbia", State_full))
+```
+
+
+```{r reactive elements, include=FALSE}
+state_names <- states$NAME
+
+state <- reactive({
+  # Filter urban areas for the selected state
+  urban_areas_state <- urban_areas %>%
+    filter(State_full == input$state_name)
+  urban_areas_state
+})
+
+one_state <- reactive({
+  # Filter states for the selected state
+  state <- states %>%
+    filter(NAME == input$state_name)
+  state
+})
+```
+
+Sidebar {.sidebar}
+-----------------------------------------------------------------------
+
+```{r}
+# Define inputs
+selectInput('state_name', label = h3("Select a state"), choices = state_names, selected = "Florida")
+```
+
+Select a state from the dropdown menu to view all large metropolitan areas.
+
+
+Hover over each city on map to view name and population size. 
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+<br>
+Application author: Kinga Stryszowska
+
+Data sources: United States Census Bureau 2020
+
+Column 1 {data-width=700}
+-----------------------------------------------------------------------
+
+```{r map}
+output$map <- renderLeaflet({
+
+  m <- state()
+  
+  city_df <- m %>%
+  sf::st_drop_geometry()
+  
+  city_labels <- lapply(seq(nrow(m)), function(i) {
+  paste0(
+    "<b>City Name: </b>",
+    city_df[i, "City"],
+    "<br>",
+    "<b>Total Population: </b>",
+    prettyNum(round(city_df[i, "population"], digits = 2), big.mark = ",")
+    )
+  })
+  
+  s <- one_state()
+  
+  map <- leaflet() %>%
+    
+  # Add 3 different basemap options
+  addProviderTiles(providers$Esri.WorldImagery, group = "Satellite") %>% 
+  addProviderTiles(providers$CartoDB.DarkMatterNoLabels, group = "Dark") %>%
+  addProviderTiles(providers$CartoDB.Voyager, group = "Streets") %>%
+  
+  # Add a User-Interface (UI) control to switch layers
+  leaflet::addLayersControl(
+    baseGroups = c("Dark", "Streets", "Satellite"),
+    options = layersControlOptions(collapsed = FALSE)) %>%
+    
+    clearMarkers() %>%
+    
+    # Add State Boundaries
+  addPolygons(
+    data = s,
+    color = "white",
+    opacity = 0.3,
+    fillColor = "transparent",
+    weight = 2) |>
+    
+  addPolygons(
+    data = s,
+    color = "white",
+    fillColor = "transparent",
+    weight = 1) |>
+    
+  # Add city circles  
+  leaflet::addCircleMarkers(
+    data = m,
+    color = "white",
+    fillColor = "#d5adfb",
+    label = lapply(city_labels, htmltools::HTML),
+    weight = 1,
+    radius = ~ scales::rescale(population, c(1,20)), 
+    fillOpacity = 0.8)
+
+  map
+  
+})
+
+leafletOutput('map', width = '100%', height = '100%')  
+```
+
+Column 2
+-----------------------------------------------------------------------
+```{r}
+observeEvent(input$state_name, {
+  # Update the plot when the state selection changes
+  output$pop_size <- renderHighchart({
+    filtered_data <- urban_areas %>%
+      filter(State_full == input$state_name) %>%
+      arrange(desc(population))
+
+    highchart() %>%
+      hc_chart(type = "bar") %>%
+      hc_title(text = "Population of Cities") %>%
+      hc_xAxis(categories = filtered_data$City) %>%
+      hc_yAxis(title = list(text = "Population")) %>%
+      hc_legend(enabled = FALSE) %>%
+      hc_add_series(name = "Population",
+                    data = filtered_data$population,
+                    color = "#d5adfb")  # Specify your desired color here
+  })
+})
+
+highchartOutput("pop_size", height = "100%")
+```
+

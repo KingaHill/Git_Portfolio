@@ -1,0 +1,159 @@
+---
+title: "Joyplots"
+author: "Kinga Stryszowska-Hill"
+date: "November 2022"
+output:
+  rmdformats::downcute
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, progress = FALSE)
+```
+
+# Background
+
+I recently came across [this](https://www.helenmakesmaps.com/post/how-to-joy-plot) article talking about how to use QGIS and R to create joyplot topography maps. And I became fascinated. So much so that I even opened an Etsy shop selling digital files of the maps I made.
+
+But that's neither here nor there. Let's talk about joyplots. Joyplots are so named after the album cover of an iconic 1979 album cover for the album “Unknown Pleasures” by the British band Joy Division. The album cover was inspired by a Scientific American article showing a graph of pulsar waves. When researching a bit for this introduction, I learned that the term "joyplot" has an unfortunate association with the crimes of Nazis, so the preferred name is ridgeline plots. 
+
+![Joy Division's iconic 1979 album cover](C:/Users/Kinga Hill/Dropbox/ACADEMIA/R/ProtfolioProjects/JoyDivision.jpg)
+
+Ridgeline plots are made by reading the elevation measurements of an area across horizontal transects (lines). So to set up for a ridgeline plot, we need an elevation raster, we need to make horizontal lines across the raster, and then we need to read the elevation along those horizontal lines at some interval. The elevation readings are what is used to create the series of rdigeline plots that are stacked on top of each other for a 3D effect.
+
+I was able to replicate the process in ArcGIS Pro, but it was very tedious, so I really wanted to automate the whole thing in R. That's when I found [this](https://dieghernan.github.io/202205_Unknown-pleasures-R/) recent tutorial, which helped me connect the dots to automation. 
+
+## Load Libraries
+```{r}
+#Packages
+library(tidyverse) 
+library(ggridges)
+library(sf)
+library(elevatr)
+library(mapview)
+library(raster)
+library(units)
+library(here)
+library(tigris)
+```
+
+## Get Shape of a Large Area
+This method uses a low resolution elevation raster so it works best on larger areas like states and countries. I also used is successfully on National Parks, but did not have much luck with cities. 
+
+### States
+I downloaded a shapefile of US state boundaries from the [US Census Bureau](https://www.census.gov/geographies/mapping-files/time-series/geo/carto-boundary-file.html). I specifically chose the cb_2018_us_state_500k.zip file. 
+```{r}
+# Import shapefile
+states <- tigris::states() %>%
+  sf::st_transform(crs = 4326) #WGS 84, UTM zone 17N, 32617
+
+# filter out Nevada
+state <- states %>%
+  dplyr::filter(NAME =="Nevada")
+
+plot(state)
+```
+
+## Download Elevation Data
+Use the shape of the state we just filtered (Nevada) as the location.
+The z-value is the zoom level and a 7 works well for US States.
+```{r}
+#Download elevation data using elevatr package
+elevation <- elevatr::get_elev_raster(locations = state, z = 7, clip = "bbox") %>%
+  # And convert to terra
+  terra::rast() %>%
+  # Mask to the shape so the shape is exactly that of Nevada
+  mask(terra::vect(state))
+
+# Plot
+terra::plot(elevation)
+```
+
+## Process Elevation
+The rows of this elevation raster will serve as our horizontal lines to read elevation from.
+The original raster has almost 1,500 rows. That is too many and won't make the graph look good. We want to aim for about 100 rows for best ridgeline results. 
+```{r}
+names(elevation) <- "elev"
+
+nrow(elevation)
+
+# Divide by ~100 to get an aggregation factor of 15
+factor <- round(nrow(elevation) / 100)
+
+# aggregate raster based on the aggregation factor
+dem_agg <- aggregate(elevation, factor)
+
+nrow(dem_agg)
+
+terra::plot(dem_agg)
+
+# Change any negative and NA elevation readings to 0
+dem_agg[dem_agg < 0] <- 0
+dem_agg[is.na(dem_agg)] <- 0
+
+# Convert raster to data frame and then tibble
+dem_df <- as.data.frame(dem_agg, xy = TRUE, na.rm = FALSE)
+as_tibble(dem_df)
+```
+
+## Plot
+The ggridges package is a great package for making beautiful rodgeline plots with many applications. The scale parameter exaggerates the ridges and should be adjusted for visual effect.
+
+### White
+```{r}
+ggplot() +
+  geom_sf(data = state, color = NA, fill = NA) +
+  ggridges::geom_density_ridges(
+    data = dem_df, aes(
+      x = x, y = y,
+      # Group by row so that each raster row will be its own line
+      group = y,
+      # The line height will be the elevation along that line
+      height = elev
+    ),
+    rel_min_height = 0.001,
+    stat = "identity",
+    scale = 8,
+    fill = "white",
+    color = "black",
+    size = 0.25
+  ) +
+  theme_void() +
+  theme(panel.background = element_rect(fill = "transparent", colour = NA),  
+        plot.background = element_rect(fill = "transparent", colour = NA))
+```
+
+### Export as PNG
+```{r}
+ggsave(filename = "Plots/Nevada.png",  width = 5, height = 7, dpi = 600, device = "png")
+```
+
+
+### Black
+```{r}
+ggplot() +
+  geom_sf(data = state, color = NA, fill = NA) +
+  geom_density_ridges(
+    data = dem_df, aes(
+      x = x, y = y,
+      group = y,
+      height = elev
+    ),
+    rel_min_height = 0.001,
+    stat = "identity",
+    scale = 8,
+    color = "white",
+    fill = "black",
+    size = 0.25
+  ) +
+  scale_fill_viridis_c(option = "G") +
+  theme_void() +
+  theme(legend.position = "none",
+        panel.background = element_rect(fill = "black", colour = NA),  
+        plot.background = element_rect(fill = "black", colour = NA))
+```
+
+
+```{r}
+ggsave(filename = "Plots/NV_black.png",  width = 5, height = 7, dpi = 600, device = "png")
+```
+
