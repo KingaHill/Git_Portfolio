@@ -8,7 +8,7 @@ This notebook is a fun mapping art project where I use the boundary of a state t
 
 ![Nevada](https://github.com/KingaHill/Git_Portfolio/blob/main/Images/Nevada_joyplot.png)
 
-### US_Cities_Flexdashbaord
+### US_Cities_Flexdashboard.Rmd
 I built a shiny/flexdashboard to interactively explore the largest cities in each US State. 
 
 ![USCities](https://github.com/KingaHill/Git_Portfolio/blob/main/Images/US_Cities_Flexdashboard.png)
