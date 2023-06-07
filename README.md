@@ -1,4 +1,4 @@
-# Welcome to my Git portfolio
+# Welcome to my GitHub portfolio
 This repository is a collection of R Markdown files that I use to build spatial analytics projects.
 
 ## Project Files (in alphabetical order)
